@@ -2,51 +2,44 @@ import { useState, useEffect, useRef } from "react";
 import CodeMirror from "@uiw/react-codemirror";
 import axios from "axios";
 
-const DEFAULT_CODE = ``;
 const API_BASE_URL = "http://localhost:5000";
 
 export default function App() {
-  const [code, setCode] = useState(DEFAULT_CODE);
-  const [outputLines, setOutputLines] = useState([]);
+  const [code, setCode] = useState(() => localStorage.getItem("savedCode") || "");
   const [prompts, setPrompts] = useState([]);
   const [inputs, setInputs] = useState([]);
   const [currentInput, setCurrentInput] = useState("");
+  const [outputLines, setOutputLines] = useState([]);
   const [isRunning, setIsRunning] = useState(false);
 
   const outputEndRef = useRef(null);
   const fileInputRef = useRef(null);
 
-  // Load saved code on mount
-  useEffect(() => {
-    const savedCode = localStorage.getItem("savedCode");
-    if (savedCode) setCode(savedCode);
-  }, []);
-
-  // Save code on change
   useEffect(() => {
     localStorage.setItem("savedCode", code);
+    extractPrompts(code);
   }, [code]);
 
-  // Scroll output to bottom on new output
+  useEffect(() => {
+    if (inputs.length === prompts.length && prompts.length > 0) {
+      runCode();
+    }
+  }, [inputs]);
+
   useEffect(() => {
     outputEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [outputLines]);
 
-  // Extract prompts from the code
-  useEffect(() => {
-    resetTerminal();
-    const matches = [...code.matchAll(/input\(\s*['"](.*?)['"]\s*\)/g)].map(
-      (m) => m[1].trim()
-    );
-    setPrompts(matches);
-  }, [code]);
-
-  // Auto-run code when all inputs are collected
-  useEffect(() => {
-    if (inputs.length === prompts.length && prompts.length > 0) {
-      runCodeWithInputs(inputs);
+  const extractPrompts = (code) => {
+    const regex = /input\((?:'([^']*)'|"([^"]*)")\)/g;
+    const matches = [];
+    let match;
+    while ((match = regex.exec(code)) !== null) {
+      matches.push(match[1] || match[2]);
     }
-  }, [inputs, prompts]);
+    setPrompts(matches);
+    resetTerminal();
+  };
 
   const resetTerminal = () => {
     setOutputLines([]);
@@ -55,14 +48,14 @@ export default function App() {
   };
 
   const resetAll = () => {
-    setCode(DEFAULT_CODE);
-    resetTerminal();
+    setCode("");
     setPrompts([]);
+    resetTerminal();
     localStorage.removeItem("savedCode");
   };
 
   const getPrompt = () => {
-    return inputs.length < prompts.length ? prompts[inputs.length] + " " : "> ";
+    return prompts[inputs.length] || "> ";
   };
 
   const handleInputSubmit = () => {
@@ -71,58 +64,25 @@ export default function App() {
     setCurrentInput("");
   };
 
-  const runCodeWithInputs = async (inputList) => {
-    if (!API_BASE_URL) {
-      setOutputLines(["Error: Backend API URL not configured"]);
-      return;
-    }
-
+  const runCode = async () => {
     setIsRunning(true);
-
     try {
       const res = await axios.post(`${API_BASE_URL}/run`, {
         code,
-        input: inputList.join("\n"),
+        input: inputs.join("\n"),
       });
 
-      let output = res.data.output || "";
-
-      // Remove prompts from output for cleaner display
-      prompts.forEach((p) => {
-        output = output.replaceAll(p, "");
-      });
-
-      const lines = output
-        .trim()
+      const lines = (res.data.output || "")
         .split("\n")
-        .filter((line) => line.trim() !== "");
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
 
       setOutputLines(lines);
     } catch (error) {
-      console.error("Run error:", error);
-      setOutputLines(["Error running code"]);
+      setOutputLines(["Error: Failed to run code."]);
+    } finally {
+      setIsRunning(false);
     }
-
-    setIsRunning(false);
-  };
-
-  // File upload handlers
-  const handleFileUpload = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const text = event.target.result;
-      setCode(text);
-      localStorage.setItem("savedCode", text);
-      resetTerminal();
-    };
-    reader.readAsText(file);
-  };
-
-  const triggerFileInput = () => {
-    fileInputRef.current?.click();
   };
 
   const saveCodeToFile = () => {
@@ -135,81 +95,67 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
+  const handleFileUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target.result;
+      setCode(text);
+    };
+    reader.readAsText(file);
+  };
+
   return (
     <div style={styles.container}>
-      <h2 style={styles.title}>ONLINE PYTHON CODE EDITOR</h2>
+      <h2 style={styles.title}>Online Python Code Editor</h2>
 
-      <div style={styles.editorWrapper}>
-        <CodeMirror
-          value={code}
-          height="280px"
-          onChange={setCode}
-          theme="dark"
-          style={styles.editor}
-        />
+      <div style={styles.editorBox}>
+        <CodeMirror value={code} height="300px" onChange={setCode} theme="dark" />
       </div>
 
-      <div style={styles.buttonsRow}>
-        <button
-          style={{ ...styles.button, ...(isRunning ? styles.disabledButton : {}) }}
-          onClick={() => runCodeWithInputs(inputs)}
-          disabled={isRunning}
-          title="Run Code"
-        >
-          {isRunning ? "Running..." : "Run Code"}
+      <div style={styles.buttons}>
+        <button onClick={() => runCode()} disabled={isRunning} style={styles.button}>
+          {isRunning ? "Running..." : "Run"}
         </button>
-
-        <button
-          style={{ ...styles.button, ...styles.resetButton }}
-          onClick={resetAll}
-          title="Reset Code & Terminal"
-        >
+        <button onClick={resetAll} style={{ ...styles.button, backgroundColor: "#dc3545" }}>
           Reset
         </button>
-
-        <button
-          style={{ ...styles.button, ...styles.downloadButton }}
-          onClick={saveCodeToFile}
-          title="Download Code"
-        >
+        <button onClick={saveCodeToFile} style={{ ...styles.button, backgroundColor: "#28a745" }}>
           Download
         </button>
-
-        <button style={styles.button} onClick={triggerFileInput} title="Upload Code">
+        <button onClick={() => fileInputRef.current?.click()} style={styles.button}>
           Upload
         </button>
-
         <input
           type="file"
           accept=".py,.txt"
           ref={fileInputRef}
-          style={{ display: "none" }}
           onChange={handleFileUpload}
+          style={{ display: "none" }}
         />
       </div>
 
-      <div style={styles.outputContainer}>
-        <pre style={styles.output}>
-          {outputLines.map((line, idx) => (
-            <div key={idx}>{line}</div>
-          ))}
+      <div style={styles.terminal}>
+        {outputLines.map((line, index) => (
+          <div key={index}>{line}</div>
+        ))}
 
-          {!isRunning && inputs.length < prompts.length && (
-            <div style={styles.inputRow}>
-              <span style={styles.promptText}>{getPrompt()}</span>
-              <input
-                type="text"
-                value={currentInput}
-                onChange={(e) => setCurrentInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleInputSubmit()}
-                autoFocus
-                style={styles.inputBox}
-                placeholder="Enter input and press Enter"
-              />
-            </div>
-          )}
-          <div ref={outputEndRef} />
-        </pre>
+        {!isRunning && inputs.length < prompts.length && (
+          <div style={styles.inputRow}>
+            <span>{getPrompt()}</span>
+            <input
+              type="text"
+              value={currentInput}
+              onChange={(e) => setCurrentInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleInputSubmit()}
+              autoFocus
+              style={styles.inputBox}
+            />
+          </div>
+        )}
+        <div ref={outputEndRef} />
       </div>
     </div>
   );
@@ -218,103 +164,57 @@ export default function App() {
 const styles = {
   container: {
     maxWidth: 900,
-    margin: "40px auto",
-    padding: 30,
-    fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
-    backgroundColor: "#f9f9f9",
-    borderRadius: 8,
-    boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
-    color: "#333",
-    display: "flex",
-    flexDirection: "column",
+    margin: "auto",
+    padding: 24,
+    fontFamily: "Segoe UI, sans-serif",
   },
   title: {
     textAlign: "center",
-    marginBottom: 30,
-    fontWeight: "700",
-    fontSize: 28,
-    letterSpacing: 0.5,
-    color: "#222",
+    marginBottom: 20,
+    fontSize: 26,
   },
-  editorWrapper: {
+  editorBox: {
     border: "1px solid #ccc",
     borderRadius: 6,
     overflow: "hidden",
-    boxShadow: "inset 0 0 8px #ddd",
   },
-  editor: {
-    backgroundColor: "#fff",
-    color: "#333",
-    fontSize: 16,
-    fontWeight: 500,
-  },
-  buttonsRow: {
-    marginTop: 20,
+  buttons: {
+    marginTop: 15,
     display: "flex",
-    justifyContent: "center",
-    gap: 15,
+    gap: 12,
     flexWrap: "wrap",
+    justifyContent: "center",
   },
   button: {
-    padding: "12px 28px",
-    fontSize: 16,
-    fontWeight: "600",
-    borderRadius: 6,
-    border: "none",
+    padding: "10px 20px",
     backgroundColor: "#007bff",
     color: "#fff",
-    cursor: "pointer",
-    boxShadow: "0 3px 8px rgba(0,123,255,0.4)",
-    transition: "background-color 0.25s ease-in-out",
-  },
-  disabledButton: {
-    backgroundColor: "#aaa",
-    color: "#eee",
-    cursor: "not-allowed",
-    boxShadow: "none",
-  },
-  resetButton: {
-    backgroundColor: "#dc3545",
-    color: "#fff",
-    boxShadow: "0 3px 8px rgba(220,53,69,0.4)",
-  },
-  downloadButton: {
-    backgroundColor: "#28a745",
-    boxShadow: "0 3px 8px rgba(40,167,69,0.4)",
-    color: "#fff",
-  },
-  outputContainer: {
-    marginTop: 30,
-    backgroundColor: "#fff",
+    border: "none",
     borderRadius: 6,
-    padding: 20,
-    minHeight: 180,
-    fontFamily: "'Courier New', Courier, monospace",
-    fontSize: 16,
-    whiteSpace: "pre-wrap",
-    boxShadow: "0 0 10px rgba(0,0,0,0.05) inset",
-    color: "#333",
+    cursor: "pointer",
+    fontWeight: "bold",
   },
-  output: {
-    margin: 0,
-    lineHeight: 1.5,
-    minHeight: 120,
+  terminal: {
+    marginTop: 25,
+    backgroundColor: "#111",
+    color: "#0f0",
+    padding: 16,
+    borderRadius: 6,
+    minHeight: 150,
+    fontFamily: "Courier New, monospace",
   },
   inputRow: {
+    marginTop: 12,
     display: "flex",
     alignItems: "center",
-    marginTop: 10,
-  },
-  promptText: {
-    fontWeight: "600",
-    marginRight: 6,
-    color: "#555",
+    gap: 8,
   },
   inputBox: {
     flex: 1,
-    padding: 8,
-    fontSize: 16,
+    padding: "6px 10px",
     borderRadius: 4,
-    border: "1px solid #ccc",
+    border: "1px solid #444",
+    backgroundColor: "#222",
+    color: "#fff",
   },
 };
