@@ -30,7 +30,9 @@ def run_code():
         )
 
         output = proc.stdout
-        return jsonify({'output': output})
+        if proc.stderr:
+            output += "\n" + proc.stderr
+
 
     except subprocess.TimeoutExpired:
         return jsonify({'output': 'Error: Code execution timed out.'})
