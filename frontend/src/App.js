@@ -5,19 +5,7 @@ import axios from "axios";
 const DEFAULT_CODE = ``;
 const API_BASE_URL = process.env.REACT_APP_API_BASE_URL;
 
-fetch(`${API_BASE_URL}/api/some-endpoint`)
-  .then(res => {
-    if (!res.ok) throw new Error("Network response was not ok");
-    return res.json();
-  })
-  .then(data => {
-    // handle data
-  })
-  .catch(err => {
-    console.error("Fetch error:", err);
-  });
-
-function App() {
+export default function App() {
   const [code, setCode] = useState(DEFAULT_CODE);
   const [outputLines, setOutputLines] = useState([]);
   const [prompts, setPrompts] = useState([]);
@@ -26,66 +14,47 @@ function App() {
   const [isRunning, setIsRunning] = useState(false);
 
   const outputEndRef = useRef(null);
-  const fileInputRef = useRef(null); // Ref for hidden file input
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
-    const savedCode = localStorage.getItem("savedCode");
-    if (savedCode) {
-      setCode(savedCode);
+    if (!API_BASE_URL) {
+      console.error(
+        "Warning: REACT_APP_API_BASE_URL is not set. Please define it in your environment."
+      );
     }
   }, []);
 
+  // Load saved code on mount
+  useEffect(() => {
+    const saved = localStorage.getItem("savedCode");
+    if (saved) setCode(saved);
+  }, []);
+
+  // Save code whenever it changes
   useEffect(() => {
     localStorage.setItem("savedCode", code);
   }, [code]);
 
+  // Scroll output to bottom when outputLines update
   useEffect(() => {
     outputEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [outputLines]);
 
+  // Parse input prompts from the code
   useEffect(() => {
     resetTerminal();
-    const matches = [...code.matchAll(/input\(\s*["'](.*?)["']\s*\)/g)].map(
+    const matches = [...code.matchAll(/input\(\s*['"](.*?)['"]\s*\)/g)].map(
       (m) => m[1].trim()
     );
     setPrompts(matches);
   }, [code]);
 
+  // Run code automatically when all inputs are collected
   useEffect(() => {
     if (inputs.length === prompts.length && prompts.length > 0) {
       runCodeWithInputs(inputs);
     }
   }, [inputs]);
-
-  const handleInputSubmit = () => {
-    if (!currentInput.trim()) return;
-    setInputs((prev) => [...prev, currentInput.trim()]);
-    setCurrentInput("");
-  };
-
-  const runCodeWithInputs = async (inputList) => {
-    setIsRunning(true);
-    try {
-      const response = await axios.post("http://localhost:5000/run", {
-        code,
-        input: inputList.join("\n"),
-      });
-
-      let output = response.data.output || "";
-
-      prompts.forEach((prompt) => {
-        output = output.replace(prompt, "");
-      });
-
-      output = output.trim();
-      const lines = output.split("\n").filter((line) => line.trim() !== "");
-
-      setOutputLines(lines);
-    } catch (error) {
-      setOutputLines(["Error running code."]);
-    }
-    setIsRunning(false);
-  };
 
   const resetTerminal = () => {
     setOutputLines([]);
@@ -104,6 +73,66 @@ function App() {
     return inputs.length < prompts.length ? prompts[inputs.length] + " " : "> ";
   };
 
+  const handleInputSubmit = () => {
+    if (!currentInput.trim()) return;
+    setInputs((prev) => [...prev, currentInput.trim()]);
+    setCurrentInput("");
+  };
+
+  const runCodeWithInputs = async (inputList) => {
+    if (!API_BASE_URL) {
+      setOutputLines(["Error: Backend API URL not configured"]);
+      return;
+    }
+
+    setIsRunning(true);
+
+    try {
+      const res = await axios.post(`${API_BASE_URL}/run`, {
+        code,
+        input: inputList.join("\n"),
+      });
+
+      let output = res.data.output || "";
+
+      // Clean output by removing prompts
+      prompts.forEach((p) => {
+        output = output.replace(p, "");
+      });
+
+      const lines = output
+        .trim()
+        .split("\n")
+        .filter((line) => line.trim() !== "");
+
+      setOutputLines(lines);
+    } catch (error) {
+      console.error("Run error:", error);
+      setOutputLines(["Error running code"]);
+    }
+
+    setIsRunning(false);
+  };
+
+  // File upload handlers
+  const handleFileUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target.result;
+      setCode(text);
+      localStorage.setItem("savedCode", text);
+      resetTerminal();
+    };
+    reader.readAsText(file);
+  };
+
+  const triggerFileInput = () => {
+    fileInputRef.current?.click();
+  };
+
   const saveCodeToFile = () => {
     const blob = new Blob([code], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
@@ -112,26 +141,6 @@ function App() {
     a.download = "code.py";
     a.click();
     URL.revokeObjectURL(url);
-  };
-
-  // Handle file upload input change
-  const handleFileUpload = (event) => {
-    const file = event.target.files[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const text = e.target.result;
-      setCode(text);
-      localStorage.setItem("savedCode", text);
-      resetTerminal();
-    };
-    reader.readAsText(file);
-  };
-
-  // Trigger file input click
-  const triggerFileInput = () => {
-    fileInputRef.current?.click();
   };
 
   return (
@@ -143,49 +152,41 @@ function App() {
           value={code}
           height="280px"
           onChange={setCode}
-          style={styles.editor}
           theme="dark"
+          style={styles.editor}
         />
       </div>
 
       <div style={styles.buttonsRow}>
         <button
+          style={{ ...styles.button, ...(isRunning ? styles.disabledButton : {}) }}
           onClick={() => runCodeWithInputs(inputs)}
           disabled={isRunning}
-          style={{
-            ...styles.button,
-            ...(isRunning ? styles.buttonDisabled : {}),
-          }}
-          title="Run the Python code"
+          title="Run Code"
         >
           {isRunning ? "Running..." : "Run Code"}
         </button>
 
         <button
-          onClick={resetAll}
           style={{ ...styles.button, ...styles.resetButton }}
-          title="Reset code editor and terminal output"
+          onClick={resetAll}
+          title="Reset Code & Terminal"
         >
-          Reset Code & Terminal
+          Reset
         </button>
 
         <button
-          onClick={saveCodeToFile}
           style={{ ...styles.button, ...styles.downloadButton }}
-          title="Download the current code as a file"
+          onClick={saveCodeToFile}
+          title="Download Code"
         >
-          Download Code
+          Download
         </button>
 
-        <button
-          onClick={triggerFileInput}
-          style={styles.button}
-          title="Upload a code file from your device"
-        >
-          Upload Code
+        <button style={styles.button} onClick={triggerFileInput} title="Upload Code">
+          Upload
         </button>
 
-        {/* Hidden file input */}
         <input
           type="file"
           accept=".py,.txt"
@@ -197,8 +198,8 @@ function App() {
 
       <div style={styles.outputContainer}>
         <pre style={styles.output}>
-          {outputLines.map((line, i) => (
-            <div key={i}>{line}</div>
+          {outputLines.map((line, idx) => (
+            <div key={idx}>{line}</div>
           ))}
 
           {!isRunning && inputs.length < prompts.length && (
@@ -211,7 +212,7 @@ function App() {
                 onKeyDown={(e) => e.key === "Enter" && handleInputSubmit()}
                 autoFocus
                 style={styles.inputBox}
-                placeholder="Type input and press Enter"
+                placeholder="Enter input and press Enter"
               />
             </div>
           )}
@@ -274,7 +275,7 @@ const styles = {
     boxShadow: "0 3px 8px rgba(0,123,255,0.4)",
     transition: "background-color 0.25s ease-in-out",
   },
-  buttonDisabled: {
+  disabledButton: {
     backgroundColor: "#aaa",
     color: "#eee",
     cursor: "not-allowed",
@@ -308,30 +309,20 @@ const styles = {
     minHeight: 120,
   },
   inputRow: {
-    marginTop: 12,
     display: "flex",
     alignItems: "center",
-    gap: 10,
+    marginTop: 10,
   },
   promptText: {
     fontWeight: "600",
-    fontSize: 16,
-    userSelect: "none",
+    marginRight: 6,
     color: "#555",
-    minWidth: 140,
   },
   inputBox: {
-    backgroundColor: "#fff",
-    border: "1px solid #ccc",
-    borderRadius: 6,
-    color: "#333",
-    fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
+    flex: 1,
+    padding: 8,
     fontSize: 16,
-    padding: "6px 12px",
-    outline: "none",
-    flexGrow: 1,
-    transition: "border-color 0.3s ease",
+    borderRadius: 4,
+    border: "1px solid #ccc",
   },
 };
-
-export default App;
