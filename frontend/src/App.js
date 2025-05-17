@@ -3,7 +3,7 @@ import CodeMirror from "@uiw/react-codemirror";
 import axios from "axios";
 
 const DEFAULT_CODE = ``;
-const API_BASE_URL = process.env.REACT_APP_API_BASE_URL;
+const API_BASE_URL = "http://localhost:5000";
 
 export default function App() {
   const [code, setCode] = useState(DEFAULT_CODE);
@@ -16,31 +16,23 @@ export default function App() {
   const outputEndRef = useRef(null);
   const fileInputRef = useRef(null);
 
-  useEffect(() => {
-    if (!API_BASE_URL) {
-      console.error(
-        "Warning: REACT_APP_API_BASE_URL is not set. Please define it in your environment."
-      );
-    }
-  }, []);
-
   // Load saved code on mount
   useEffect(() => {
-    const saved = localStorage.getItem("savedCode");
-    if (saved) setCode(saved);
+    const savedCode = localStorage.getItem("savedCode");
+    if (savedCode) setCode(savedCode);
   }, []);
 
-  // Save code whenever it changes
+  // Save code on change
   useEffect(() => {
     localStorage.setItem("savedCode", code);
   }, [code]);
 
-  // Scroll output to bottom when outputLines update
+  // Scroll output to bottom on new output
   useEffect(() => {
     outputEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [outputLines]);
 
-  // Parse input prompts from the code
+  // Extract prompts from the code
   useEffect(() => {
     resetTerminal();
     const matches = [...code.matchAll(/input\(\s*['"](.*?)['"]\s*\)/g)].map(
@@ -49,12 +41,12 @@ export default function App() {
     setPrompts(matches);
   }, [code]);
 
-  // Run code automatically when all inputs are collected
+  // Auto-run code when all inputs are collected
   useEffect(() => {
     if (inputs.length === prompts.length && prompts.length > 0) {
       runCodeWithInputs(inputs);
     }
-  }, [inputs]);
+  }, [inputs, prompts]);
 
   const resetTerminal = () => {
     setOutputLines([]);
@@ -95,9 +87,9 @@ export default function App() {
 
       let output = res.data.output || "";
 
-      // Clean output by removing prompts
+      // Remove prompts from output for cleaner display
       prompts.forEach((p) => {
-        output = output.replace(p, "");
+        output = output.replaceAll(p, "");
       });
 
       const lines = output
